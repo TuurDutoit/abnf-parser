@@ -1,0 +1,123 @@
+simplerule = rule1
+concat = rule1 rule2
+complex = rule1 rule2 / *rule3 / [rule4.1 rule4.2 / rule4.3] (rule5 / rule6) / 2*5([rule7] (rule8 / rule9) rule10)
+
+
+Lexer:
+======
+
+[
+  [simplerule, =, rule1],
+  [concat, =, rule1, rule2],
+  [complex, =, rule1, rule2, /, *, rule3, /, [, rule4.1, rule4.2, /, rule4.3, ], (, rule5, /, rule6, ), /, 2*5, (, [, rule7, ], ( rule8, /, rule9, ), rule10, )]
+]
+
+
+parts = []
+cr = null
+while(token)
+  switch(type(token))
+    /: rules.push(cr), cr = null; continue;
+    rulename: rule = lookup
+    *: rule = rep
+    [: rule = opt
+    (: rule = or
+  cr = cr ? (type(cr = concat) ? cr.push(rule) : concat(cr, rule)) : rule
+return rules.length === 1 ? rules[0] : rules
+
+
+Parse ABNF:
+===========
+
+NamedRule {
+  name: "simplerule",
+  type: "or",
+  rules: [rule1]
+}
+
+NamedRule {
+  name: "concat",
+  type: "or",
+  rules: [
+    AndRule {
+      type: "and",
+      rules: [rule1, rule2]
+    }
+  ]
+}
+
+NamedRule {
+  name: "complex",
+  type: "or",
+  rules: [
+    AndRule {
+      type: "and",
+      rules: [rule1, rule2]
+    },
+    RepetitionRule {
+      type: "repetition",
+      min: 0,
+      max: Infinity,
+      rule: rule3
+    },
+    AndRule {
+      type: "and",
+      rules: [
+        OptionalRule {
+          type: "optional",
+          rule: OrRule {
+            type: "or",
+            rules: [
+              AndRule {
+                type: "and",
+                rules: [rule4.1, rule4.2]
+              },
+              rule4.3
+            ]
+          }
+        },
+        OrRule {
+          type: "or",
+          rules: [rule5, rule6]
+        }
+      ]
+    },
+    RepetitionRule {
+      type: "repetition",
+      min: 2,
+      max: 5,
+      rule: AndRule {
+        type: "and",
+        rules: [
+          OptionalRule {
+            type: "optional",
+            rule: rule7
+          },
+          OrRule {
+            type: "or",
+            rules: [rule8, rule9]
+          },
+          rule10
+        ]
+      }
+    }
+  ]
+}
+
+
+
+How:
+====
+
+func GroupRule(src)
+  while(tokens)
+    switch(type(token))
+      /: delete currentRule
+      rulename: ConcatRule
+      *: RepetitionRule
+      [: OptionalRule
+      (: GroupRule
+
+func NamedRule(name, src)
+  return GroupRule(src)@name
+

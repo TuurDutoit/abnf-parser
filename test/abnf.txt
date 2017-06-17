@@ -1,0 +1,30 @@
+string = "test"
+sensitive-string = 'TeSt'
+simple = rule1
+concat = rule1 rule2
+repetition = 2*5rule1 *rule2
+optional = [rule1] rule2
+comment = rule1 ; test comment
+alternatives = rule1 / rule2
+long = rule1 / rule2
+long =/ rule3 / rule4
+
+; This is a complex rule
+complex = rule1 rule2 /
+          *rule2 /
+          [rule4-1 rule4-2 / rule4-3] (rule5 / rule6) / ; Quite long...
+          2*5([rule7] (rule8 / rule9) rule10)
+
+
+rule1 = "rule1"
+rule2 = "rule2"
+rule3 = "rule3"
+rule4-1 = "rule4.1"
+rule4-2 = "rule4.2"
+rule4-3 = "rule4.3"
+rule5 = "rule5"
+rule6 = "rule6"
+rule7 = "rule7"
+rule8 = "rule8"
+rule9 = "rule9"
+rule10 = "rule10"
