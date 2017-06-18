@@ -2,24 +2,22 @@ function pad( str, len ) {
   return " ".repeat( len - str.toString().length ) + str;
 }
 
-
 class RasperError extends Error {
   
-  constructor( message, path, line, char, name ) {
+  constructor( message, name ) {
     super();
-
+    
     this.origMessage = message;
-    this.message = this.getDescription();
     this.name = name;
-    this.path = path;
-    this.line = line;
-    this.char = char;
     
   }
   
+  get message() {
+    return this.getDescription();
+  }
+  
   getDescription() {
-    return this.origMessage +
-           " at " + this.path + ":" + ( this.line + 1 ) + ":" + ( this.char + 1 );
+    return this.origMessage;
   }
   
 }
@@ -28,20 +26,37 @@ class RasperError extends Error {
 const SyntaxError = class RasperSyntaxError extends RasperError {
   
   constructor( message, src, line, char, name = "SyntaxError" ) {
-    super( message, src.path, line, char, name );
+    super( message, name );
     
     this.src = src;
-    this.message = this.getLongDescription();
-    
+    this.line = line;
+    this.char = char;
+
   }
   
-  getLongDescription() {
+  static forToken( token, message, ...rest ) {
+    return new this( message, token.src, token.line, token.char, ...rest );
+  }
+  
+  expected( token ) {
+    
+    this.origMessage += `, expected '${ token.val || token }'`;
+    
+    return this;
+  }
+  
+  getShortDescription() {
+    return this.origMessage +
+           " at " + this.src.path + ":" + ( this.line + 1 ) + ":" + ( this.char + 1 );
+  }
+  
+  getDescription() {
     let min = Math.max( this.line - 3, 0 );
     let max = this.line + 1;
     let prefixLen = ( max + 1 ).toString().length;
     let lines = this.src.lines.slice( min, max );
     let indicator = " ".repeat( this.char ) + "^";
-    let desc = this.getDescription();
+    let desc = this.getShortDescription();
     
     return desc + "\n\n" +
            lines.map( ( l, i ) => "  | " + pad( min + i + 1, prefixLen ) + " | " + l ).join( "\n" ) + "\n" +
@@ -49,6 +64,8 @@ const SyntaxError = class RasperSyntaxError extends RasperError {
   }
   
 };
+
+const ANY_WHITESPACE = /^\s*/;
 
 
 const Token = class RasperToken {
@@ -63,12 +80,8 @@ const Token = class RasperToken {
     
   }
   
-  error( message, type ) {
-    return new ABNFError( message, this.src.path, this.line, this.char, type );
-  }
-  
-  syntaxError( message = "Unexpected token '" + this.val + "'" ) {
-    return new SyntaxError( message, this.src, this.line, this.char );
+  error( message = `Unexpected token '${this.val}'`, name ) {
+    return SyntaxError.forToken( this, message, name );
   }
   
   toString() {
@@ -81,6 +94,92 @@ const Token = class RasperToken {
   
   inspect() {
     return this.val;
+  }
+  
+};
+
+
+const SimpleSource = class RasperSimpleSource {
+  
+  constructor( src, path = "unknown" ) {
+    
+    this.src = src;
+    this.path = path;
+    this.pointer = 0;
+    this.stack = [];
+    
+  }
+  
+  _get( index ) {
+    return this.tokens[ index ];
+  }
+  
+  get( index = 0 ) {
+    return this._get( this.pointer + index );
+  }
+  
+  next() {
+    let token = this.get();
+    this.pointer++;
+    return token;
+  }
+  
+  forward( num ) {
+    this.pointer += num;
+    return this;
+  }
+  
+  backward( num ) {
+    this.pointer -= num;
+    return this;
+  }
+  
+  push( index = this.pointer ) {
+    this.stack.push( index );
+    return this;
+  }
+  
+  pop() {
+    return this.stack.pop();
+  }
+  
+  atEnd() {
+    return this.pointer = this.tokens.length - 1;
+  }
+  
+};
+
+
+const Source = class RasperSource extends SimpleSource {
+  
+  parse( lexer, filter ) {
+    
+    this.lines = this.src.split( "\n" );
+    
+    // Parse every line with lexer,
+    // generating Token objects, which hold line/char info
+    this.tokensPerLine = this.lines.map( ( line, i ) => {
+      let char = line.match( ANY_WHITESPACE )[0].length;
+      let tokensDirty = line.match( lexer );
+      
+      if ( !tokensDirty ) {
+        return [];
+      }
+      
+      return tokensDirty.map( t => {
+        
+        let token = new Token( t, this, i, char );
+        char += t.length;
+        return token;
+        
+      } );
+      
+    } );
+    
+    // Concatenate all lines into one big array of tokens and remove comments
+    this.allTokens = this.tokensPerLine.reduce( ( all, line ) => all.concat( line ), [] );
+    this.tokens = this.allTokens.filter( filter );
+    
   }
   
 };
@@ -135,7 +234,6 @@ const LEXER = /(?:;.*$|=\/|[=\/(){}[\]]|\d*\*\d*|\d|<?[a-z](?:[a-z0-9\-])*>?|%[d
 
 
 
-const ANY_WHITESPACE = /^\s*/;
 
 
 
@@ -143,11 +241,6 @@ const ANY_WHITESPACE = /^\s*/;
 
 
 
-
-
-function nameFrom( token ) {
-  return token.val[0] === "<" ? token.val.slice( 1, -1 ) : token.val;
-}
 
 
 /**
@@ -156,88 +249,27 @@ function nameFrom( token ) {
  */
 
 
-const Source = class ABNFSource {
+const Source$1 = class ABNFSource extends Source {
   
-  constructor( src, path = "unknown" ) {
+  constructor( src, path ) {
+    super( src, path );
     
-    this.path = path;
-    this.src = src;
-    this.lines = src.split( "\n" );
-    this.tokensByRule = {};
-    this.tokensPerLine = null;
-    this.tokens = null;
+    this.parse( LEXER, token => token.val[0] !== ";" );
     
-    // Parse every line with lexer,
-    // generating Token objects, which hold line/char info
-    this.tokensPerLine = this.lines.map( ( line, i ) => {
-      let char = line.match( ANY_WHITESPACE )[0].length;
-      let tokensDirty = line.match( LEXER );
-      
-      if ( !tokensDirty ) {
-        return [];
-      }
-      
-      return tokensDirty.map( t => {
-        
-        let token = new Token( t, this, i, char );
-        char += t.length;
-        return token;
-        
-      } );
-      
-    } );
-    
-    // Concatenate all lines into one big array of tokens
-    this.tokens = this.tokensPerLine.reduce( ( all, line ) => all.concat( line ), [] );
-    
-    // Sort tokens by rule,
-    // taking care of =/ tokens
-    // and removing comments
-    let ruleTokens;
-    for ( let i = 0, len = this.tokens.length - 1; i < len; i++ ) {
-      let token = this.tokens[ i ];
-      let next = this.tokens[ i + 1 ];
-      
-      if ( next.val === "=" ) {
-        
-        ruleTokens = [];
-        this.tokensByRule[ nameFrom( token ) ] = ruleTokens;
-        
-      } else if ( next.val === "=/" ) {
-        
-        ruleTokens = this.tokensByRule[ nameFrom( token ) ];
-        ruleTokens.push( new Token( "/", this, next.line, next.char ) );
-        
-      } else if ( token.val[0] !== "=" && token.val[0] !== ";" ) {
-        ruleTokens.push( token );
-      }
-      
-    }
-    
-    let lastToken = this.tokens[ this.tokens.length - 1 ];
-    
-    if ( lastToken.val[0] !== ";" ) {
-      ruleTokens.push( lastToken );
+    if ( this.tokens.length < 3 ) {
+      throw new SyntaxError( "Expected at least 3 tokens in source string, found " + this.tokens.length, this, 0, 0 );
     }
     
   }
   
 };
 
-
-
-/**
- * Node Classes
- * =============================================================================
- */
-
 var fs = require("fs");
 var abnfStr = fs.readFileSync("abnf.txt", {encoding: "utf-8"});
 
-var src = new Source( abnfStr, "abnf.txt" );
+var src = new Source$1( abnfStr, "abnf.txt" );
 
-console.log(src);
+//console.log(src);
 
-var token = src.tokensByRule.complex[3];
-var err = token.syntaxError();
-console.log(err.getLongDescription());
+var token = src.tokens[48];
+throw token.error().expected("/");
